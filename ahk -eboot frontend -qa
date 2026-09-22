@@ -1,0 +1,78 @@
+pipeline {
+    agent any
+
+    environment {
+        CI = 'false'
+        EMAIL_TO = 'parthiban@bicsglobal.com,karthikeyan@bicsglobal.com,vijayakanth@bicsglobal.com,lokeshwaran@bicsglobal.com,saisindhu@bicsglobal.com,ganesh.s@bicsglobal.com,ramesh.a@bicsglobal.com'
+        REMOTE_SERVER_IP = credentials('AHK-OVH-QA-Server-IP')
+        //DOCKER_IMAGE = '3df4cc3h.c1.gra9.container-registry.ovh.net/ahkcrm_qa/reboot-reactjs'
+        DOCKER_IMAGE = 'ahkcrm_qa/reboot-reactjs'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'qa', credentialsId: 'SAR-Gogs-Access-ID', url: 'https://scm.bicsglobal.com/AHK-Reboot/AHK-REBOOT-FRONTEND-V2.git'
+            }
+        }
+
+        stage('AHK QA Rsync Deployment') {
+            steps {
+                script {
+                    sshagent(credentials: ['AHK-Jenkins-SSH-ID']) {
+                        sh '''
+                            rsync -az --delete --exclude='.env' --delete --exclude='.git' "${WORKSPACE}/" ubuntu@${REMOTE_SERVER_IP}:/home/ubuntu/reboot/frontend
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Docker Deployment') {
+            steps {
+                script {
+                    sshagent(credentials: ['AHK-Jenkins-SSH-ID']) {
+                        def version = "v${BUILD_NUMBER}"
+
+                        sh """
+                            ssh ubuntu@${REMOTE_SERVER_IP} 'mkdir -p /home/ubuntu/reboot/frontend && cd /home/ubuntu/reboot/frontend'
+                        """
+
+                        sh """
+                            ssh ubuntu@${REMOTE_SERVER_IP} 'docker ps -q -f name=reboot-frontend | grep -q . && docker stop reboot-frontend || echo "No container to stop"'
+                            ssh ubuntu@${REMOTE_SERVER_IP} 'docker ps -a -q -f name=reboot-frontend | grep -q . && docker rm reboot-frontend || echo "No container to remove"'
+                        """
+
+                        sh """
+                            ssh ubuntu@${REMOTE_SERVER_IP} 'cd /home/ubuntu/reboot/frontend && docker build -t ${DOCKER_IMAGE}:${version} .'
+                        """
+
+                        sh """
+                            ssh ubuntu@${REMOTE_SERVER_IP} 'docker run -d --name reboot-frontend -p 3001:3000 ${DOCKER_IMAGE}:${version}'
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            emailext(
+                attachLog: true,
+                body: """Build ${currentBuild.currentResult}
+
+Job: ${JOB_NAME}
+Build Number: ${BUILD_NUMBER}
+URL: ${BUILD_URL}
+Status: ${currentBuild.currentResult}
+
+Check the attached log for details.""",
+                compressLog: true,
+                subject: "Build ${currentBuild.currentResult}: #${BUILD_NUMBER}",
+                to: "${EMAIL_TO}",
+                replyTo: "jenkinsadmin@bicsglobal.com"
+            )
+        }
+    }
+}
