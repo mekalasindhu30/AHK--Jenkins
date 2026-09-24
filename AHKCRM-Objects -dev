@@ -5,7 +5,7 @@ pipeline {
     environment {
         CI = 'false'
         EMAIL_TO = 'saisindhu@bicsglobal.com,parthiban@bicsglobal.com'
-        DOCKER_PROJECT_NAME_DEV = 'ahk-phenix-Objects-dev'
+        DOCKER_IMAGE = 'ahk-phenix-Objects-dev'
         DEV_SERVER_IP = credentials('AHK-Local-Dev-Server-IP')
         ENV_FILE_PATH = '/home/bguser/phenix/python/.env'
     }
