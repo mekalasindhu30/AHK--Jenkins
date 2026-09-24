@@ -1,0 +1,72 @@
+
+pipeline {
+    agent any
+
+    environment {
+        CI = 'false'
+        EMAIL_TO = 'karthikeyan@bicsglobal.com,parthiban@bicsglobal.com'
+        ENV_FILE_PATH = '/home/bguser/phenix/python/.env'
+        DOCKER_IMAGE= 'ahk-phenix-ObjectsBulkUpload-dev'
+        DEV_SERVER_IP = credentials('AHK-Local-Dev-Server-IP')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'dev', credentialsId: 'SAR-Gogs-Access-ID', url: 'https://scm.bicsglobal.com/AHK/AHK-CRM-Suite-BE-ObjectsBulkUpload.git'
+            }
+        }
+
+        stage('Rsync Deployment') {
+            steps {
+                script {
+                    sshagent(credentials: ['AHK-Jenkins-SSH-ID']) {
+                        sh '''
+                            rsync -az --delete --exclude='.git' "${WORKSPACE}/" bguser@${DEV_SERVER_IP}:/home/bguser/phenix/python/AHK-CRM-Suite-BE-ObjectsBulkUpload/
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Docker Deployment') {
+            steps {
+                script {
+                    sshagent(credentials: ['AHK-Jenkins-SSH-ID']) {
+                        def version = "v${BUILD_NUMBER}"
+
+                        sh """
+                            ssh bguser@${DEV_SERVER_IP} 'mkdir -p /home/bguser/phenix/python/AHK-CRM-Suite-BE-ObjectsBulkUpload && cd /home/bguser/phenix/python/AHK-CRM-Suite-BE-ObjectsBulkUpload'
+                        """
+
+                        sh """
+                            ssh bguser@${DEV_SERVER_IP} 'docker ps -q -f name=ahk-phenix-ObjectsBulkUpload-dev | grep -q . && docker stop ahk-phenix-ObjectsBulkUpload-dev || echo "No container to stop"'
+                            ssh bguser@${DEV_SERVER_IP} 'docker ps -a -q -f name=ahk-phenix-ObjectsBulkUpload-dev | grep -q . && docker rm ahk-phenix-ObjectsBulkUpload-dev|| echo "No container to remove"'
+                        """
+
+                        sh """
+                            ssh bguser@${DEV_SERVER_IP} 'cd /home/bguser/phenix/python/AHK-CRM-Suite-BE-ObjectsBulkUpload && docker build -t ${DOCKER_IMAGE}:${version} .'
+                        """
+
+                        sh """
+                            ssh bguser@${DEV_SERVER_IP} 'docker run -d --env-file /home/bguser/phenix/python/.env --name bulkupload -p 4045:4045 ${DOCKER_IMAGE}:${version}'
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            emailext(
+                attachLog: true,
+                body: """Build ${currentBuild.currentResult}
+
+Job: ${JOB_NAME}
+Build Number: ${BUILD_NUMBER}
+URL: ${BUILD_URL}
+Status: ${currentBuild.currentResult}
+
+Check the attached log for d
+
