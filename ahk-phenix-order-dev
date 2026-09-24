@@ -1,4 +1,3 @@
-
 pipeline {
     agent any
 
@@ -59,4 +58,36 @@ pipeline {
         stage('Cleanup Old Docker Images') {
             steps {
                 script {
-``
+                    sshagent(credentials: ['AHK-Jenkins-SSH-ID']) {
+                        sh """
+                            ssh bguser@${DEV_SERVER_IP} '
+                                echo "Cleaning old Docker images..."
+                                docker images ${DOCKER_IMAGE} --format "{{.Repository}}:{{.Tag}}" | grep -v v${BUILD_NUMBER} | xargs -r docker rmi
+                            '
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            emailext(
+                attachLog: true,
+                body: """Build ${currentBuild.currentResult}
+
+Job: ${JOB_NAME}
+Build Number: ${BUILD_NUMBER}
+URL: ${BUILD_URL}
+Status: ${currentBuild.currentResult}
+
+Check the attached log for details.""",
+                compressLog: true,
+                subject: "Build ${currentBuild.currentResult}: #${BUILD_NUMBER}",
+                to: "${EMAIL_TO}",
+                replyTo: "jenkinsadmin@bicsglobal.com"
+            )
+        }
+    }
+}
