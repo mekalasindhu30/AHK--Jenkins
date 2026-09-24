@@ -1,0 +1,72 @@
+```groovy
+pipeline {
+    agent any
+
+    environment {
+        CI = 'false'
+        EMAIL_TO = 'saisindhu@bicsglobal.com,parthiban@bicsglobal.com'
+        DOCKER_PROJECT_NAME_DEV = 'ahk-phenix-Objects-dev'
+        DEV_SERVER_IP = credentials('AHK-Local-Dev-Server-IP')
+        ENV_FILE_PATH = '/home/bguser/phenix/python/.env'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'dev', credentialsId: 'SAR-Gogs-Access-ID', url: 'https://scm.bicsglobal.com/AHK/AHK-CRM-Suite-BE-Objects.git'
+            }
+        }
+
+        stage('Rsync Deployment') {
+            steps {
+                script {
+                    sshagent(credentials: ['AHK-Jenkins-SSH-ID']) {
+                        sh '''
+                            rsync -az --delete --exclude='.git' "${WORKSPACE}/" bguser@${DEV_SERVER_IP}:/home/bguser/phenix/python/AHK-CRM-Suite-BE-Objects/
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Docker Deployment') {
+            steps {
+                script {
+                    sshagent(credentials: ['AHK-Jenkins-SSH-ID']) {
+                        def version = "v${BUILD_NUMBER}"
+
+                        sh """
+                            ssh bguser@${DEV_SERVER_IP} 'mkdir -p /home/bguser/phenix/python/AHK-CRM-Suite-BE-Objects && cd /home/bguser/phenix/python/AHK-CRM-Suite-BE-Objects'
+                        """
+
+                        sh """
+                            ssh bguser@${DEV_SERVER_IP} 'docker ps -q -f name=ahk-phenix-Objects-dev | grep -q . && docker stop ahk-phenix-Objects-dev || echo "No container to stop"'
+                            ssh bguser@${DEV_SERVER_IP} 'docker ps -a -q -f name=ahk-phenix-Objects-dev | grep -q . && docker rm ahk-phenix-Objects-dev || echo "No container to remove"'
+                        """
+
+                        sh """
+                            ssh bguser@${DEV_SERVER_IP} 'cd /home/bguser/phenix/python/AHK-CRM-Suite-BE-Objects && docker build -t ${DOCKER_IMAGE}:${version} .'
+                        """
+
+                        sh """
+                            echo "Running Docker container..."
+                            ssh bguser@${DEV_SERVER_IP} 'docker run -d --env-file /home/bguser/phenix/python/.env --name objects -p 4042:4042 ${DOCKER_IMAGE}:${version} '
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            emailext attachLog: true,
+                body: "${currentBuild.result}: ${BUILD_URL}",
+                compressLog: true,
+                subject: "Build Notification: ${JOB_NAME}-Build# ${BUILD_NUMBER} ${currentBuild.result}",
+                to: "${EMAIL_TO}",
+                replyTo: "jenkinsadmin@bicsglobal.com"
+        }
+    }
+}
+```
