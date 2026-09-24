@@ -1,0 +1,62 @@
+
+pipeline {
+    agent any
+
+    environment {
+        CI = 'false'
+        EMAIL_TO = 'saisindhu@bicsglobal.com,parthiban@bicsglobal.com'
+        DEV_SERVER_IP = credentials('AHK-Local-Dev-Server-IP')
+        ENV_FILE_PATH = '/home/bguser/phenix/python/.env'
+        DOCKER_IMAGE = 'ahk-phenix-order-dev'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'dev', credentialsId: 'SAR-Gogs-Access-ID', url: 'https://scm.bicsglobal.com/AHK/AHK-CRM-Suite-BE-Order.git'
+            }
+        }
+
+        stage('Rsync Deployment') {
+            steps {
+                script {
+                    sshagent(credentials: ['AHK-Jenkins-SSH-ID']) {
+                        sh '''
+                            rsync -az --delete --exclude='.git' "${WORKSPACE}/" bguser@${DEV_SERVER_IP}:/home/bguser/phenix/python/AHK-CRM-Suite-BE-Order/
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Docker Deployment') {
+            steps {
+                script {
+                    sshagent(credentials: ['AHK-Jenkins-SSH-ID']) {
+                        def version = "v${BUILD_NUMBER}"
+
+                        sh """
+                            ssh bguser@${DEV_SERVER_IP} 'mkdir -p /home/bguser/phenix/python/AHK-CRM-Suite-BE-Order'
+                        """
+
+                        sh """
+                            ssh bguser@${DEV_SERVER_IP} 'docker ps -q -f name=ahk-phenix-order-dev | grep -q . && docker stop ahk-phenix-order-dev || echo "No container to stop"'
+                            ssh bguser@${DEV_SERVER_IP} 'docker ps -a -q -f name=ahk-phenix-order-dev | grep -q . && docker rm ahk-phenix-order-dev || echo "No container to remove"'
+                        """
+
+                        sh """
+                            ssh bguser@${DEV_SERVER_IP} 'cd /home/bguser/phenix/python/AHK-CRM-Suite-BE-Order && docker build -t ${DOCKER_IMAGE}:${version} .'
+                        """
+
+                        sh """
+                            ssh bguser@${DEV_SERVER_IP} 'docker run -d --env-file /home/bguser/phenix/python/.env --name order -p 4041:4041 ${DOCKER_IMAGE}:${version}'
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Cleanup Old Docker Images') {
+            steps {
+                script {
+``
